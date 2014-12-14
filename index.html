@@ -1,0 +1,333 @@
+<!doctype html>
+<html>
+<head>
+	<title>Cards</title>
+	<meta charset="utf-8" />
+	<link rel="stylesheet" href="http://code.jquery.com/ui/1.10.3/themes/smoothness/jquery-ui.css" />
+	<style>
+		.overDroppable { box-shadow: 0 0 5px rgba(138, 255, 47, 1);
+    				 -webkit-box-shadow: 0 0 5px rgba(138, 255, 47, 1); 
+				     -moz-box-shadow: 0 0 5px rgba(138, 255, 47, 1);
+				     border:1px solid rgba(138,255,47, 0.8);
+				   }
+	</style>
+	<script src="http://code.jquery.com/jquery-1.9.1.js"></script>
+	<script src="http://code.jquery.com/ui/1.10.2/jquery-ui.js"></script>
+	<script src="/jquery.ui.touch-punch.min.js"></script>
+	<script src="/Menu.js"></script>
+	<script src="/Messages.js"></script>
+	<!--script src="/socket.io/socket.io.js"></script-->
+	<script src="/socket.io/socket.io.js"></script>
+	<script>	
+	
+	CARD_WIDTH = 50;
+	CARD_HEIGHT = 50;
+
+	//socket = io.connect('http://192.168.1.6');
+	socket = io.connect('http://localhost');
+	//socket = io.connect('http://facundo2-cards.jit.su/',{'connect timeout': 20000,'rememberTransport': false, 'transports' : [ 'xhr-polling' ]});
+	
+	socket.heartbeatInterval = 5; //cambie este valor de 20 a 10 para que ande mas rapido.
+	socket.heartbeatTimeout = 10; 
+
+
+	var player;
+	var cards = {};
+	var players = [];
+	var messages = "";
+	var messagesComponent;
+	
+	var Card = function(id_,posx_,posy_,my_) {
+		var id = id_;
+		var posx = posx_;
+		var posy = posy_;
+		var my = my_;
+		var up = false;
+		var node;
+		var container;
+		
+		var click = function() {
+			if (my){
+				socket.emit('cardTurnedOver', { 'posx': posx, 'posy': posy,'player': player} );
+				//turnUp();
+			}
+		};
+
+		var createCard = function() {
+			
+			node = $("<div></div>");
+			node.attr("id",id);
+			node.attr("class","card");
+			$('body').append(node);
+			node.click(click);
+			var screenPositionX = posx *CARD_WIDTH;
+			var screenPositionY = posy *CARD_HEIGHT;
+			node.css({"left":screenPositionX + "px","top":screenPositionY + "px",
+					  "text-align": "center", "box-shadow":"1px 1px 5px #333333", "position": "absolute",
+					  "background-color": "white","border-radius": "3px","border":"1px solid #a1a1a1"});
+			
+			setTimeout(render,0);
+		};
+		
+		var render = function() {
+			if ($("#"+id).length == 0) {
+				createCard();
+			}
+			$("#"+id).css({"width":CARD_WIDTH+"px","height":CARD_HEIGHT+"px"});
+			if (up) {
+				$("#"+id).css({"background-color":"green"});
+			}
+			else {
+				if (my) {
+					$("#"+id).css({"background-color":"yellow"});	
+				}
+				else {
+					$("#"+id).css({"background-color":"black"});	
+				}
+			}
+		};
+		this.turnDown = function() {
+			up = false;
+			render();
+		};
+		var turnUp = this.turnUp = function() {
+			up = true;
+			render();
+		};
+		this.getId = function() {
+			return id;
+		};
+		this.getPosition = function() {
+			return {posx: posx, posy:posy};
+		};
+		this.setMy = function() {
+			my = true;
+			render();
+		}
+		this.toString = function() {
+			return id;
+		};
+		render();
+	};
+	
+	var Table = function() {
+		var cards = [];
+		
+		this.setCard = function(card,x,y) {
+			cards[x][y] = card;
+		};
+		
+		this.getCard = function(x,y) {
+			return cards[x][y];
+		};
+		
+		this.setCards = function (cardsArray, player) {
+			for (var i in cardsArray) {
+				var jsonCard = cardsArray[i];
+				if (jsonCard.up) {
+					cards[jsonCard.posx][jsonCard.posy].turnUp();
+				}
+				else {
+					if (jsonCard.owner == player) {
+						cards[jsonCard.posx][jsonCard.posy].setMy();
+					}
+				}
+			}
+		};
+
+		this.setPlayedCards = function(cardsArray) {
+			for (var i in cardsArray) {
+				var jsonCard = cardsArray[i];
+				cards[jsonCard.posx][jsonCard.posy].turnUp();
+			}
+		};
+
+		this.init = function() {
+			
+			for (var i = 0; i < 11; i++) {
+			    cards[i] = [];
+			}
+			var index = 0;
+			for (var i = 0; i < 11 ; i++){
+				for (var j = 0; j < 11 ; j++){
+					cards[i][j] = new Card("card"+index,i,j,false);
+					index++;
+				}
+			}
+		};
+
+		this.init();
+	}	
+
+	var table = new Table();
+	
+	var clear = function() {
+		table = new Table();
+		$(".card").remove();
+		cards = {};
+	};
+	
+	socket.on('updateUserList', function (data) {
+		console.log(data);
+		$("#playersList").empty();
+		for( i in data.players) {
+			var itemNode = $("<li></li>");
+			itemNode.text(data.players[i]);
+			$("#playersList").append(itemNode);
+		}
+		players.push(data.playerName);
+	});
+	
+	socket.on("successfullLogin", function(d){
+		$("#login-dialog").dialog("close");
+		$("#setup-dialog").dialog("open");
+		player = d.player;
+		socket.on( player+"Cards" , function (data) {
+					console.log("Table cards "+data);
+					
+					table.setCards(data.cards, player);
+				});
+	});
+	
+	socket.on("adminUser", function(data){
+		$("#startGameButton").show();
+		$("#gameSelect").show();
+		$("#waitMessage").text("Usted es el administrador del juego. Expere a que los usuarios se conecten");
+		menu.addButton("dealButton","Repartir",function() {
+			socket.emit('deal', {});
+			menu.collapse();
+		});
+		menu.addButton("finishButton","Terminar",function() {
+			socket.emit('finishHand', {});
+		});
+		menu.addButton("newGame","New Game",function() {
+			socket.emit('newGame', {});
+		});
+	});
+	
+	socket.on("wrongUserName", function(data){
+		$("#loginMessage").text("El usuario ya existe.");
+	});
+	
+	socket.on("tableIsFull", function(data){
+		$("#loginMessage").text("Esta mesa está completa.");
+	});
+	
+	socket.on("gameAlreadyStarted", function(data){
+		$("#loginMessage").text("El juego ya inicio.");
+	});
+	
+	socket.on("finishHand", function(data){
+		clear();
+	});
+	
+	socket.on("startGame", function(data){
+		$("#login-dialog").dialog( "close" );
+		$("#setup-dialog").dialog( "close" );
+		players = data.players;
+		for (i in players) {
+			console.log("adding player"+players[i]);
+			menu.addPlayer({name : players[i], points : "0"});
+		}
+		menu.show();
+	});
+
+	socket.on("tableCards", function(data){
+		table.setCards(data.cards);
+		$("#login-dialog").dialog( "close" );
+		$("#setup-dialog").dialog( "close" );
+	});
+	
+	socket.on("playersPoints", function(data){
+		for ( player in data) {
+			console.log("Player: "+ player + ", points:"+data[player]);
+			menu.updatePlayerPoints(player, data[player]);
+		}
+	});
+	
+	var addMessage = function(message) {
+		messages+=message+"\n";
+		$("#messages").text(messages);
+		messagesComponent.addMessage(message);
+	};
+	
+	socket.on("message", function(message){
+		addMessage(message);
+	});
+	
+	$(document).ready(function(){
+		
+		$( "#login-dialog" ).dialog({
+		  autoOpen: false,
+		  height: 300,
+		  width: 350,
+		  modal: true,
+		  buttons: {
+			"Login": function() {
+				var playerName = $("#inputName").val();
+				var playerPassword = $("#inputPassword").val();
+				var data = {
+					player: playerName,
+					password : playerPassword
+				};
+				socket.emit('login', data);
+			}
+		  },
+		  close: function() {
+			$("#inputName").val( "" ).removeClass( "ui-state-error" );
+		  }
+		});
+		
+		$( "#setup-dialog" ).dialog({
+		  autoOpen: false,
+		  height: 300,
+		  width: 350,
+		  modal: true
+		});
+		
+		$("#startGameButton").click(function(){
+			socket.emit('startGame', {game : $("#gameSelect").val(), player : player});
+		}
+		);
+		
+		$( "#login-dialog" ).dialog( "open" );
+		
+		messagesComponent = new MessagesComponent($("body"),0,-60);
+		messagesComponent.setEnterAction(function(text) {
+			socket.emit('message', player + " dice: " + text);
+		});
+		
+	});
+	
+	menu = new Menu();
+	menu.hide();
+	
+	</script>
+</head>
+<!-- background-color:rgb(36, 129, 16) -->
+<body style="margin: 0px; padding: 5px; background-color:rgb(36, 129, 16)">
+	<div id="login-dialog" title="Login">
+		<fieldset style="display: block">
+			<div>
+				<label for="inputName">Name</label>
+				<input type="text" name="name" id="inputName" style="width : 100%"/>
+				<label for="inputPassword">Password</label>
+				<input type="password" name="password" id="inputPassword" style="width : 100%"/>
+			</div>
+			<div id="loginMessage" style="color: rgb(200,50,50)"></div>
+		</fieldset>
+	</div>
+	<div id="setup-dialog" title="Setup">
+		<div>Players:</div>
+		<ul id="playersList">
+		</ul>
+		<input id="startGameButton" name="Start" type="button" value="Start" style="display:none"/>
+		<p id="waitMessage">Por favor espere a que el administrador inicie el juego.</p>
+	</div>
+	<div id="container">
+		<div id="table">
+		</div>
+		<!--background-color:rgb(83, 43, 0)-->		
+	</div>
+</body>
+</html>
